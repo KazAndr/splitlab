@@ -114,8 +114,8 @@ class DataManager:
         dm_slice = safe_slice_x(self.edmt, x0, x1)  # (n_dm, win)
         dm_ds, stride = downsample_x(dm_slice, max_cols=max_cols)
 
-        # flip Y so it looks like matplotlib origin='upper'
-        img = np.flipud(np.asarray(dm_ds))
+        
+        img = np.asarray(dm_ds)
         return RenderedWindow(image=img, x0_global=x0, stride=stride, width_real=int(dm_slice.shape[1]))
 
     def render_segments_triplet(self, center_seg: int) -> np.ndarray:
@@ -123,7 +123,7 @@ class DataManager:
         x0 = (center_seg - 1) * self.SEG
         x1 = x0 + 3 * self.SEG
         dm_slice = safe_slice_x(self.edmt, x0, x1)
-        return np.flipud(np.asarray(dm_slice))
+        return np.asarray(dm_slice)
 
     def read_filterbank_triplet(self, center_seg: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """

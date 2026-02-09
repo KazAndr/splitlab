@@ -21,6 +21,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.mgr = DataManager(segment_size=256)
+        self._lut = self._plasma_lut()
 
         self.labels: LabelStore | None = None
         self.current_row_idx: int = 0
@@ -42,6 +43,42 @@ class MainWindow(QMainWindow):
         self._apply_mode()
 
     # ---------------- UI ----------------
+    def _simplify_imageview(self, iv: pg.ImageView) -> None:
+        # remove UI parts (histogram/levels pane, ROI/menu buttons)
+        try:
+            iv.ui.histogram.hide()
+        except Exception:
+            pass
+        try:
+            iv.ui.roiBtn.hide()
+        except Exception:
+            pass
+        try:
+            iv.ui.menuBtn.hide()
+        except Exception:
+            pass
+        try:
+            iv.ui.normGroup.hide()
+        except Exception:
+            pass
+
+    def _plasma_lut(self, n: int = 256):
+        # Prefer pyqtgraph colormap; fallback to matplotlib if available
+        try:
+            cmap = pg.colormap.get("plasma", source="matplotlib")
+            return cmap.getLookupTable(nPts=n, alpha=False)
+        except Exception:
+            pass
+
+        try:
+            import numpy as np
+            import matplotlib.cm as cm
+            m = cm.get_cmap("plasma", n)
+            lut = (m(np.linspace(0, 1, n))[:, :3] * 255).astype(np.ubyte)
+            return lut
+        except Exception:
+            return None
+
     def _build_ui(self):
         root = QWidget()
         grid = QGridLayout(root)
@@ -50,6 +87,7 @@ class MainWindow(QMainWindow):
 
         # Block 1
         self.dm_period = pg.ImageView()
+        self._simplify_imageview(self.dm_period)
         self.dm_period.ui.roiBtn.hide()
         self.dm_period.ui.menuBtn.hide()
         self._period_vline = pg.InfiniteLine(angle=90, movable=False)
@@ -59,6 +97,7 @@ class MainWindow(QMainWindow):
 
         # Block 2
         self.dm_segments = pg.ImageView()
+        self._simplify_imageview(self.dm_segments)
         self.dm_segments.ui.roiBtn.hide()
         self.dm_segments.ui.menuBtn.hide()
         self._seg_v1 = pg.InfiniteLine(pos=256, angle=90, movable=False)
@@ -87,6 +126,7 @@ class MainWindow(QMainWindow):
 
         # Block 4
         self.fb_view = pg.ImageView()
+        self._simplify_imageview(self.fb_view)
         self.fb_view.ui.roiBtn.hide()
         self.fb_view.ui.menuBtn.hide()
         self.profile_plot = pg.PlotWidget()
@@ -107,8 +147,30 @@ class MainWindow(QMainWindow):
         self.btn_load_dm = QPushButton("Load DM-time .npy")
         self.btn_load_mjd = QPushButton("Load MJD table")
         self.btn_labels_csv = QPushButton("Select labels CSV (resume)")
+
+        self.st_fil = QLabel("✗")
+        self.st_dm = QLabel("✗")
+        self.st_mjd = QLabel("✗")
+        self.st_lbl = QLabel("✗")
+
+        self.path_fil = QLabel("")
+        self.path_dm = QLabel("")
+        self.path_mjd = QLabel("")
+        self.path_lbl = QLabel("")
+
+        for lab in (self.st_fil, self.st_dm, self.st_mjd, self.st_lbl):
+            lab.setFixedWidth(20)
+
+        status = QWidget()
+        s = QGridLayout(status)
+        s.addWidget(QLabel(".fil:"), 0, 0); s.addWidget(self.st_fil, 0, 1); s.addWidget(self.path_fil, 0, 2)
+        s.addWidget(QLabel("DM .npy:"), 1, 0); s.addWidget(self.st_dm, 1, 1); s.addWidget(self.path_dm, 1, 2)
+        s.addWidget(QLabel("MJD table:"), 2, 0); s.addWidget(self.st_mjd, 2, 1); s.addWidget(self.path_mjd, 2, 2)
+        s.addWidget(QLabel("labels.csv:"), 3, 0); s.addWidget(self.st_lbl, 3, 1); s.addWidget(self.path_lbl, 3, 2)
+
         loaders = QWidget()
         l = QVBoxLayout(loaders)
+        l.addWidget(status)
         l.addWidget(self.btn_load_fil)
         l.addWidget(self.btn_load_dm)
         l.addWidget(self.btn_load_mjd)
@@ -351,12 +413,31 @@ class MainWindow(QMainWindow):
     def _show_message(self, title: str, text: str):
         QMessageBox.information(self, title, text)
 
+    def _show_message(self, title: str, text: str):
+        QMessageBox.information(self, title, text)
+
+    def _set_ok(self, lab: QLabel, ok: bool) -> None:
+        lab.setText("✓" if ok else "✗")
+        lab.setStyleSheet("color: #3fb950;" if ok else "color: #f85149;")
+
     # ---------------- load actions ----------------
     def _on_load_dm(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select DM-time .npy", "", "NumPy (*.npy)")
         if not path:
             return
-        self.mgr.load_edmt(path)
+        try:
+            self.mgr.load_edmt(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Load DM-time failed", str(e))
+            self.mgr.edmt = None
+            self._set_ok(self.st_dm, False)
+            self.path_dm.setText("")
+            self.path_dm.setToolTip("")
+            return
+
+        self._set_ok(self.st_dm, True)
+        self.path_dm.setText(path)
+        self.path_dm.setToolTip(path)
         self._update_info("Loaded DM-time dataset.")
         self._try_activate()
 
@@ -364,7 +445,19 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Select filterbank .fil", "", "Filterbank (*.fil)")
         if not path:
             return
-        self.mgr.load_fil(path)
+        try:
+            self.mgr.load_fil(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Load .fil failed", str(e))
+            self.mgr.fil = None
+            self._set_ok(self.st_fil, False)
+            self.path_fil.setText("")
+            self.path_fil.setToolTip("")
+            return
+
+        self._set_ok(self.st_fil, True)
+        self.path_fil.setText(path)
+        self.path_fil.setToolTip(path)
         self._update_info("Loaded filterbank file.")
         self._try_activate()
 
@@ -372,12 +465,26 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Select MJD pulse table", "", "Text/CSV (*)")
         if not path:
             return
-        # apply current params before load (so split has correct P)
-        self._on_params_changed(silent=True)
-        self.mgr.load_pulses(path)
+
+        try:
+            # apply current params before load (so split has correct P)
+            self._on_params_changed(silent=True)
+            self.mgr.load_pulses(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Load MJD table failed", str(e))
+            self.mgr.df_base = None
+            self.mgr.df = None
+            self._set_ok(self.st_mjd, False)
+            self.path_mjd.setText("")
+            self.path_mjd.setToolTip("")
+            return
 
         # lock split once pulse table is loaded (per your rule)
         self.cb_split.setEnabled(False)
+
+        self._set_ok(self.st_mjd, True)
+        self.path_mjd.setText(path)
+        self.path_mjd.setToolTip(path)
 
         self.current_row_idx = 0
         self._update_info("Loaded MJD pulse table.")
@@ -387,8 +494,23 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Select labels CSV (existing or new)", "", "CSV (*.csv)")
         if not path:
             return
-        self.mgr.labels_path = Path(path)
-        self.labels = LabelStore(path)
+
+        try:
+            self.mgr.labels_path = Path(path)
+            self.labels = LabelStore(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Labels CSV failed", str(e))
+            self.mgr.labels_path = None
+            self.labels = None
+            self._set_ok(self.st_lbl, False)
+            self.path_lbl.setText("")
+            self.path_lbl.setToolTip("")
+            return
+
+        self._set_ok(self.st_lbl, True)
+        self.path_lbl.setText(path)
+        self.path_lbl.setToolTip(path)
+
         self._update_info("Labels CSV selected. Resume will use seg_center = start_pos//SEG heuristic.")
 
         # resume: jump to first row whose expected seg_center is not in CSV
@@ -399,6 +521,7 @@ class MainWindow(QMainWindow):
                     self.current_row_idx = i
                     break
             self._load_current_row()
+
 
     def _on_split_changed(self):
         self.mgr.set_split(self.cb_split.isChecked())
@@ -456,6 +579,8 @@ class MainWindow(QMainWindow):
 
         lo, hi = levels_by_percentile(rw.image)
         self.dm_period.setImage(rw.image, autoLevels=False, levels=(lo, hi))
+        if self._lut is not None:
+            self.dm_period.getImageItem().setLookupTable(self._lut)
 
         self._update_info("Rendered period DM-time window (block 1). Click to show segments.")
 
@@ -526,6 +651,8 @@ class MainWindow(QMainWindow):
         img = self.mgr.render_segments_triplet(self.center_seg)
         lo, hi = levels_by_percentile(img)
         self.dm_segments.setImage(img, autoLevels=False, levels=(lo, hi))
+        if self._lut is not None:
+            self.dm_segments.getImageItem().setLookupTable(self._lut)
 
         # click position inside 3*SEG cut:
         cut_start = (self.center_seg - 1) * self.mgr.SEG
