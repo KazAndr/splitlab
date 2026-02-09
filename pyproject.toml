@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "splitlab"
+version = "0.1.0"
+description = "SPLIT — Simple Pulse Labeling InTerface (PyQt5 + pyqtgraph)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "KazAndr"}]
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "pyyaml>=6.0",
+  "PyQt5>=5.15.9",
+  "pyqtgraph>=0.13.3",
+  "your>=0.6.0",
+  "astropy>=5.0",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.4", "pytest>=8.0"]
+
+[project.scripts]
+splitlab = "splitlab.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
