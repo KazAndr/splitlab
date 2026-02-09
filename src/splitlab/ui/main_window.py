@@ -675,8 +675,10 @@ class MainWindow(QMainWindow):
         # block 4: filterbank + dedisp + profile
         raw_f_t, dd_f_t, prof = self.mgr.read_filterbank_triplet(self.center_seg)
 
-        # show dd as image (flip Y so hi-freq on top visually)
-        dd_img = np.flipud(dd_f_t)
+        freq_mhz = self.mgr.channel_freq_mhz()
+        flip_freq = freq_mhz[0] < freq_mhz[-1]
+        dd_img = np.flipud(dd_f_t) if flip_freq else dd_f_t
+        
         lo2, hi2 = levels_by_percentile(dd_img)
         self.fb_view.setImage(dd_img, autoLevels=False, levels=(lo2, hi2))
 

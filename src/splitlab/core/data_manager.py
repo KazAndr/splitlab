@@ -125,6 +125,10 @@ class DataManager:
         dm_slice = safe_slice_x(self.edmt, x0, x1)
         return np.asarray(dm_slice)
 
+    def channel_freq_mhz(self) -> np.ndarray:
+        freq, _ = self._channel_freq_mhz_and_foff()
+        return freq
+
     def _channel_freq_mhz_and_foff(self) -> tuple[np.ndarray, float]:
         """
         Build per-channel frequency grid in MHz in the SAME order as data channels.
@@ -149,29 +153,32 @@ class DataManager:
         freq_mhz = fch1 + np.arange(nch, dtype=float) * foff
         return freq_mhz, float(foff)
 
-    def read_filterbank_triplet(
-        self,
-        center_seg: int,
-        extra_right_segments: int = 2,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def read_filterbank_triplet(self, center_seg: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Read a wider chunk to the RIGHT to reduce roll wrap-around artifacts.
+        Read exactly enough samples on the right to compensate max DM delay,
+        then dedisperse without wrap and return only 3*SEG for display.
 
-        We READ: (3 + extra_right_segments) * SEG samples starting from (center_seg-1)*SEG
-        We DISPLAY/RETURN only first 3*SEG (segments: left/center/right).
-
-        Returns (raw_f_t_3seg, dd_f_t_3seg, profile_dd_3seg)
-        raw_f_t_3seg: (nchan, 3*SEG)
-        dd_f_t_3seg:  (nchan, 3*SEG)
-        profile:      (3*SEG,)
+        Returns (raw_3, dd_3, prof_3)
+        raw_3: (nchan, 3*SEG)
+        dd_3:  (nchan, 3*SEG)
+        prof_3:(3*SEG,)
         """
         assert self.fil is not None
+        hdr = self.fil.your_header
 
         fb_start = max(0, (center_seg - 1) * self.SEG)
-
-        extra_right_segments = max(0, int(extra_right_segments))
-        nsamp_read = (3 + extra_right_segments) * self.SEG
         nsamp_show = 3 * self.SEG
+
+        # compute per-channel delays in samples
+        freq_mhz, _ = self._channel_freq_mhz_and_foff()
+        freq_ghz = (freq_mhz / 1000.0).astype(float)
+
+        tsamp_sec = float(hdr.tsamp)
+        delays_pts = delays_pts_for_channels(freq_ghz, self.dm, tsamp_sec)
+        max_delay = int(np.max(delays_pts)) if delays_pts.size else 0
+
+        # read enough samples to avoid right-edge padding artefact
+        nsamp_read = nsamp_show + max_delay + 1
 
         raw = self.fil.get_data(nstart=fb_start, nsamp=nsamp_read)
 
@@ -182,22 +189,10 @@ class DataManager:
             data_f_t_full = raw
         data_f_t_full = np.asarray(data_f_t_full, dtype=np.float32)
 
-        hdr = self.fil.your_header
-        nch = int(hdr.nchans)
-        fch1 = float(hdr.fch1)
-        bw = float(hdr.bw)
-
-        # Channel frequencies in the SAME order as channels in data_f_t_full
-        freq_mhz, foff = self._channel_freq_mhz_and_foff()
-        freq_ghz = (freq_mhz / 1000.0).astype(float)
-
-        tsamp_sec = float(hdr.tsamp)
-        delays_pts = delays_pts_for_channels(freq_ghz, self.dm, tsamp_sec)
-
-        # apply dedispersion WITHOUT wrap
+        # dedisperse WITHOUT wrap
         dd_full = dedisperse_shift(data_f_t_full, delays_pts)
 
-        # CROP: show only first 3 segments (left/center/right)
+        # crop: show only first 3 segments
         raw_3 = data_f_t_full[:, :nsamp_show]
         dd_3 = dd_full[:, :nsamp_show]
         prof_3 = np.sum(dd_3, axis=0)
