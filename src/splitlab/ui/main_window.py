@@ -5,11 +5,11 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QDoubleValidator
+from PyQt5.QtGui import QDoubleValidator, QKeySequence
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QLabel, QLineEdit, QPushButton,
     QGroupBox, QHBoxLayout, QVBoxLayout, QCheckBox, QComboBox, QSpinBox,
-    QTextEdit, QFileDialog, QMessageBox
+    QTextEdit, QFileDialog, QMessageBox, QAction
 )
 
 from splitlab.core.data_manager import DataManager
@@ -269,11 +269,30 @@ class MainWindow(QMainWindow):
         # click on period view
         self.dm_period.getView().scene().sigMouseClicked.connect(self._on_period_click)
 
-        # shortcuts (no extra dependencies)
-        pg.Qt.QtGui.QShortcut(pg.Qt.QtGui.QKeySequence("Y"), self, activated=self._label_yes)
-        pg.Qt.QtGui.QShortcut(pg.Qt.QtGui.QKeySequence("N"), self, activated=self._label_no)
-        pg.Qt.QtGui.QShortcut(pg.Qt.QtGui.QKeySequence(Qt.Key_Left), self, activated=self._prev_row)
-        pg.Qt.QtGui.QShortcut(pg.Qt.QtGui.QKeySequence(Qt.Key_Right), self, activated=self._next_row)
+        # Hotkeys that work regardless of focus
+        act_yes = QAction(self)
+        act_yes.setShortcut(QKeySequence(Qt.Key_Y))
+        act_yes.setShortcutContext(Qt.ApplicationShortcut)
+        act_yes.triggered.connect(self._label_yes)
+        self.addAction(act_yes)
+
+        act_no = QAction(self)
+        act_no.setShortcut(QKeySequence(Qt.Key_N))
+        act_no.setShortcutContext(Qt.ApplicationShortcut)
+        act_no.triggered.connect(self._label_no)
+        self.addAction(act_no)
+
+        act_prev = QAction(self)
+        act_prev.setShortcut(QKeySequence(Qt.Key_Left))
+        act_prev.setShortcutContext(Qt.ApplicationShortcut)
+        act_prev.triggered.connect(self._prev_row)
+        self.addAction(act_prev)
+
+        act_next = QAction(self)
+        act_next.setShortcut(QKeySequence(Qt.Key_Right))
+        act_next.setShortcutContext(Qt.ApplicationShortcut)
+        act_next.triggered.connect(self._next_row)
+        self.addAction(act_next)
 
     # ---------------- helpers ----------------
     def _set_controls_enabled(self, enabled: bool) -> None:
