@@ -31,3 +31,20 @@ def dedisperse_roll(data_f_t: np.ndarray, delays_pts: np.ndarray) -> np.ndarray:
     for i in range(data_f_t.shape[0]):
         out[i] = np.roll(data_f_t[i], -int(delays_pts[i]))
     return out
+
+def dedisperse_shift(data_f_t: np.ndarray, delays_pts: np.ndarray, fill_value: float = 0.0) -> np.ndarray:
+    """
+    Shift channels left by delays_pts WITHOUT wrap-around (pad with fill_value).
+    data_f_t: (nchan, nt)
+    delays_pts: (nchan,), expected >= 0
+    """
+    nchan, nt = data_f_t.shape
+    out = np.full_like(data_f_t, fill_value)
+    for i in range(nchan):
+        d = int(delays_pts[i])
+        if d <= 0:
+            out[i, :] = data_f_t[i, :]
+        elif d < nt:
+            out[i, : nt - d] = data_f_t[i, d:]
+        # else: leave as fill_value
+    return out

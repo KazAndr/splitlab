@@ -8,7 +8,7 @@ import pandas as pd
 
 from .pulse_table import load_pulse_table, apply_split_period, get_position_in_filfile
 from .utils import safe_slice_x, downsample_x
-from .dedispersion import delays_pts_for_channels, dedisperse_roll
+from .dedispersion import delays_pts_for_channels, dedisperse_shift
 
 try:
     from your import Your  # type: ignore
@@ -125,34 +125,81 @@ class DataManager:
         dm_slice = safe_slice_x(self.edmt, x0, x1)
         return np.asarray(dm_slice)
 
-    def read_filterbank_triplet(self, center_seg: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _channel_freq_mhz_and_foff(self) -> tuple[np.ndarray, float]:
         """
-        Returns (raw_f_t, dd_f_t, profile)
-        raw_f_t shape: (nchan, 3*SEG)
-        dd_f_t shape: (nchan, 3*SEG)
-        profile shape: (3*SEG,)
+        Build per-channel frequency grid in MHz in the SAME order as data channels.
+
+        Prefer hdr.foff if present.
+        Otherwise use hdr.bw:
+        - if |bw| > 5 MHz -> treat as TOTAL bandwidth and use foff = bw / nchans
+        - else -> treat as per-channel offset directly
+        """
+        assert self.fil is not None
+        hdr = self.fil.your_header
+        nch = int(hdr.nchans)
+        fch1 = float(hdr.fch1)
+
+        if hasattr(hdr, "foff"):
+            foff = float(getattr(hdr, "foff"))
+        else:
+            bw = float(getattr(hdr, "bw", 0.0))
+            # Heuristic: large magnitude looks like total BW (e.g. -400 MHz)
+            foff = (bw / nch) if abs(bw) > 5.0 else bw
+
+        freq_mhz = fch1 + np.arange(nch, dtype=float) * foff
+        return freq_mhz, float(foff)
+
+    def read_filterbank_triplet(
+        self,
+        center_seg: int,
+        extra_right_segments: int = 2,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Read a wider chunk to the RIGHT to reduce roll wrap-around artifacts.
+
+        We READ: (3 + extra_right_segments) * SEG samples starting from (center_seg-1)*SEG
+        We DISPLAY/RETURN only first 3*SEG (segments: left/center/right).
+
+        Returns (raw_f_t_3seg, dd_f_t_3seg, profile_dd_3seg)
+        raw_f_t_3seg: (nchan, 3*SEG)
+        dd_f_t_3seg:  (nchan, 3*SEG)
+        profile:      (3*SEG,)
         """
         assert self.fil is not None
 
         fb_start = max(0, (center_seg - 1) * self.SEG)
-        nsamp = 3 * self.SEG
 
-        raw = self.fil.get_data(nstart=fb_start, nsamp=nsamp)
-        # normalize to (nchan, nt)
-        data_f_t = raw.T if raw.shape[0] == nsamp else raw
-        data_f_t = np.asarray(data_f_t, dtype=np.float32)
+        extra_right_segments = max(0, int(extra_right_segments))
+        nsamp_read = (3 + extra_right_segments) * self.SEG
+        nsamp_show = 3 * self.SEG
 
-        # freq axis (MHz -> GHz)
+        raw = self.fil.get_data(nstart=fb_start, nsamp=nsamp_read)
+
+        # Normalize to (nchan, nt)
+        if raw.shape[0] == nsamp_read:
+            data_f_t_full = raw.T
+        else:
+            data_f_t_full = raw
+        data_f_t_full = np.asarray(data_f_t_full, dtype=np.float32)
+
         hdr = self.fil.your_header
         nch = int(hdr.nchans)
         fch1 = float(hdr.fch1)
         bw = float(hdr.bw)
-        freq_mhz = fch1 + np.arange(nch) * bw
+
+        # Channel frequencies in the SAME order as channels in data_f_t_full
+        freq_mhz, foff = self._channel_freq_mhz_and_foff()
         freq_ghz = (freq_mhz / 1000.0).astype(float)
 
         tsamp_sec = float(hdr.tsamp)
         delays_pts = delays_pts_for_channels(freq_ghz, self.dm, tsamp_sec)
-        dd = dedisperse_roll(data_f_t, delays_pts)
 
-        prof = np.sum(dd, axis=0)
-        return data_f_t, dd, prof
+        # apply dedispersion WITHOUT wrap
+        dd_full = dedisperse_shift(data_f_t_full, delays_pts)
+
+        # CROP: show only first 3 segments (left/center/right)
+        raw_3 = data_f_t_full[:, :nsamp_show]
+        dd_3 = dd_full[:, :nsamp_show]
+        prof_3 = np.sum(dd_3, axis=0)
+
+        return raw_3, dd_3, prof_3
