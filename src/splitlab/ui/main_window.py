@@ -206,6 +206,26 @@ class MainWindow(QMainWindow):
 
         # initial disable until minimal ready
         self._set_controls_enabled(False)
+        self._apply_plasma()
+
+    def _apply_plasma(self):
+        # Plasma colormap for all images
+        cmap = None
+        try:
+            cmap = pg.colormap.get("plasma", source="matplotlib")
+        except Exception:
+            try:
+                cmap = pg.colormap.get("plasma")
+            except Exception:
+                cmap = None
+
+        if cmap is None:
+            return
+
+        lut = cmap.getLookupTable(nPts=256, alpha=False)
+        self.dm_period.getImageItem().setLookupTable(lut)
+        self.dm_segments.getImageItem().setLookupTable(lut)
+        self.fb_view.getImageItem().setLookupTable(lut)
 
     def _boxed(self, title: str, widget):
         box = QGroupBox(title)
