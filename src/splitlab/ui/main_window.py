@@ -22,6 +22,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.mgr = DataManager(segment_size=256)
         self._lut = self._plasma_lut()
+        # high-contrast pens for overlays (visible on plasma colormap)
+        self._pen_click = pg.mkPen(color="#ffffff", width=2)
+        self._pen_seg = pg.mkPen(color="#00e5ff", width=2, style=Qt.DashLine)
+        self._pen_jump = pg.mkPen(color="#ff00ff", width=2, style=Qt.DashLine)
 
         self.labels: LabelStore | None = None
         self.current_row_idx: int = 0
@@ -35,6 +39,7 @@ class MainWindow(QMainWindow):
         self.clicked_global_x: int | None = None
         self.clicked_local_x: int | None = None
         self.center_seg: int | None = None
+        self._jump_seg_id: int | None = None
 
         self._pending_comment: str = ""
 
@@ -100,9 +105,15 @@ class MainWindow(QMainWindow):
         self.dm_period.ui.roiBtn.hide()
         self.dm_period.ui.menuBtn.hide()
         self._tune_imageview(self.dm_period, invert_y=True)
-        self._period_vline = pg.InfiniteLine(angle=90, movable=False)
+        self._period_vline = pg.InfiniteLine(angle=90, movable=False, pen=self._pen_click)
+        self._period_seg_left = pg.InfiniteLine(angle=90, movable=False, pen=self._pen_jump)
+        self._period_seg_right = pg.InfiniteLine(angle=90, movable=False, pen=self._pen_jump)
         self.dm_period.getView().addItem(self._period_vline)
+        self.dm_period.getView().addItem(self._period_seg_left)
+        self.dm_period.getView().addItem(self._period_seg_right)
         self._period_vline.hide()
+        self._period_seg_left.hide()
+        self._period_seg_right.hide()
         box1 = self._boxed("1) DM-time (one period) — click on pulse", self.dm_period)
 
         # Block 2
@@ -111,9 +122,9 @@ class MainWindow(QMainWindow):
         self.dm_segments.ui.roiBtn.hide()
         self.dm_segments.ui.menuBtn.hide()
         self._tune_imageview(self.dm_segments, invert_y=True)
-        self._seg_v1 = pg.InfiniteLine(pos=256, angle=90, movable=False)
-        self._seg_v2 = pg.InfiniteLine(pos=512, angle=90, movable=False)
-        self._seg_click = pg.InfiniteLine(angle=90, movable=False)
+        self._seg_v1 = pg.InfiniteLine(pos=256, angle=90, movable=False, pen=self._pen_seg)
+        self._seg_v2 = pg.InfiniteLine(pos=512, angle=90, movable=False, pen=self._pen_seg)
+        self._seg_click = pg.InfiniteLine(angle=90, movable=False, pen=self._pen_click)
         v = self.dm_segments.getView()
         v.addItem(self._seg_v1)
         v.addItem(self._seg_v2)
@@ -645,7 +656,10 @@ class MainWindow(QMainWindow):
         self.clicked_global_x = None
         self.clicked_local_x = None
         self.center_seg = None
+        self._jump_seg_id = self._jump_seg_id  # preserve jump target if set
         self._period_vline.hide()
+        self._period_seg_left.hide()
+        self._period_seg_right.hide()
         self._seg_click.hide()
         self.cb_left.setChecked(False)
         self.cb_right.setChecked(False)
@@ -674,6 +688,9 @@ class MainWindow(QMainWindow):
         self.comment_edit.setText("")
         self._pending_comment = ""
 
+        # if jump was requested, show its segment bounds (if visible)
+        self._update_jump_lines()
+
     def _prev_row(self):
         if self.mgr.df is None:
             return
@@ -694,6 +711,11 @@ class MainWindow(QMainWindow):
         # only accept left click
         if ev.button() != Qt.LeftButton:
             return
+
+        # user clicked manually -> clear jump highlight
+        self._jump_seg_id = None
+        self._period_seg_left.hide()
+        self._period_seg_right.hide()
 
         vb = self.dm_period.getView()
         pos = ev.scenePos()
@@ -878,24 +900,77 @@ class MainWindow(QMainWindow):
 
     # ---------------- jump ----------------
     def _jump_to_seg(self):
+        if self._is_labeling():
+            self._show_message("Jump disabled in Labeling mode", "Switch to Viewing mode to jump by segment index.")
+            return
         if self.mgr.df is None or self.mgr.fil is None:
             return
         seg_id = int(self.seg_spin.value())
-        target_global_x = seg_id * self.mgr.SEG + self.mgr.SEG // 2
+        seg_start = seg_id * self.mgr.SEG
+        seg_end = seg_start + self.mgr.SEG
+        target_center = seg_start + self.mgr.SEG // 2
         win = self.mgr.window_samples()
 
         best_idx = 0
         best_dist = None
+        found_cover = False
         for i in range(len(self.mgr.df)):
             start = self.mgr.start_pos_for_row(i)
-            if start <= target_global_x < start + win:
+            end = start + win
+            # Prefer windows that fully cover the target segment
+            if start <= seg_start and seg_end <= end:
                 best_idx = i
-                best_dist = 0
+                found_cover = True
                 break
-            dist = abs(start - target_global_x)
+            # fallback: closest window start to segment center
+            dist = abs(start - target_center)
             if best_dist is None or dist < best_dist:
                 best_dist = dist
                 best_idx = i
 
         self.current_row_idx = best_idx
+        self._jump_seg_id = seg_id
         self._load_current_row()
+        if not found_cover:
+            self._show_message("Segment not fully in window",
+                               "Closest period selected, but the requested segment may be outside the shown window.")
+
+        # auto-select the segment as center and render triplet + filterbank
+        # use segment center as synthetic click
+        clicked_global_x = seg_start + self.mgr.SEG // 2
+        # if window is valid, compute display position; otherwise skip visuals
+        if self._period_stride > 0:
+            x_display = (clicked_global_x - self._period_x0_global) / self._period_stride
+            self._period_vline.setPos(x_display)
+            self._period_vline.show()
+
+        self.clicked_global_x = int(clicked_global_x)
+        self.clicked_local_x = int(clicked_global_x - self._period_x0_global)
+        self.center_seg = int(seg_id)
+
+        # render dependent blocks
+        self._render_segments_and_fb()
+        self._update_info("Jumped to seg_id and centered triplet.")
+
+    def _update_jump_lines(self):
+        if self._jump_seg_id is None:
+            self._period_seg_left.hide()
+            self._period_seg_right.hide()
+            return
+        seg_start = self._jump_seg_id * self.mgr.SEG
+        seg_end = seg_start + self.mgr.SEG
+
+        # show only if segment intersects current window
+        win_start = self._period_x0_global
+        win_end = self._period_x0_global + self._period_width_real
+        if seg_end <= win_start or seg_start >= win_end or self._period_stride <= 0:
+            self._period_seg_left.hide()
+            self._period_seg_right.hide()
+            return
+
+        x_left = (seg_start - win_start) / self._period_stride
+        x_right = (seg_end - win_start) / self._period_stride
+        self._period_seg_left.setPos(x_left)
+        self._period_seg_right.setPos(x_right)
+        self._period_seg_left.show()
+        self._period_seg_right.show()
