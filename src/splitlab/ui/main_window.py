@@ -62,6 +62,15 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _tune_imageview(self, iv: pg.ImageView, invert_y: bool = False) -> None:
+        """Make image views fill their box: no padding, unlocked aspect, optional Y invert."""
+        vb = iv.getView()
+        vb.setAspectLocked(False)
+        vb.setDefaultPadding(0.0)
+        vb.enableAutoRange(x=True, y=True)
+        if invert_y:
+            vb.invertY(True)
+
     def _plasma_lut(self, n: int = 256):
         # Prefer pyqtgraph colormap; fallback to matplotlib if available
         try:
@@ -82,14 +91,15 @@ class MainWindow(QMainWindow):
     def _build_ui(self):
         root = QWidget()
         grid = QGridLayout(root)
-        grid.setContentsMargins(8, 8, 8, 8)
-        grid.setSpacing(8)
+        grid.setContentsMargins(6, 6, 6, 6)
+        grid.setSpacing(6)
 
         # Block 1
         self.dm_period = pg.ImageView()
         self._simplify_imageview(self.dm_period)
         self.dm_period.ui.roiBtn.hide()
         self.dm_period.ui.menuBtn.hide()
+        self._tune_imageview(self.dm_period, invert_y=True)
         self._period_vline = pg.InfiniteLine(angle=90, movable=False)
         self.dm_period.getView().addItem(self._period_vline)
         self._period_vline.hide()
@@ -100,6 +110,7 @@ class MainWindow(QMainWindow):
         self._simplify_imageview(self.dm_segments)
         self.dm_segments.ui.roiBtn.hide()
         self.dm_segments.ui.menuBtn.hide()
+        self._tune_imageview(self.dm_segments, invert_y=True)
         self._seg_v1 = pg.InfiniteLine(pos=256, angle=90, movable=False)
         self._seg_v2 = pg.InfiniteLine(pos=512, angle=90, movable=False)
         self._seg_click = pg.InfiniteLine(angle=90, movable=False)
@@ -129,8 +140,10 @@ class MainWindow(QMainWindow):
         self._simplify_imageview(self.fb_view)
         self.fb_view.ui.roiBtn.hide()
         self.fb_view.ui.menuBtn.hide()
+        self._tune_imageview(self.fb_view)
         self.profile_plot = pg.PlotWidget()
         self.profile_plot.showGrid(x=True, y=True)
+        self.profile_plot.getPlotItem().getViewBox().setDefaultPadding(0.0)
         fb = QWidget()
         vv = QVBoxLayout(fb)
         vv.addWidget(self.fb_view, 3)
@@ -264,7 +277,7 @@ class MainWindow(QMainWindow):
         grid.addWidget(rightw, 0, 2, 6, 1)
 
         self.setCentralWidget(root)
-        self.resize(1500, 950)
+        self.resize(1500, 980)
 
         # initial disable until minimal ready
         self._set_controls_enabled(False)
@@ -292,7 +305,10 @@ class MainWindow(QMainWindow):
     def _boxed(self, title: str, widget):
         box = QGroupBox(title)
         lay = QVBoxLayout(box)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(4)
         lay.addWidget(widget)
+        box.setSizePolicy(widget.sizePolicy())
         return box
 
     def _wire(self):
