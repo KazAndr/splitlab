@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QDoubleValidator, QKeySequence
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QLabel, QLineEdit, QPushButton,
-    QGroupBox, QHBoxLayout, QVBoxLayout, QCheckBox, QComboBox, QSpinBox,
+    QGroupBox, QHBoxLayout, QVBoxLayout, QFormLayout, QCheckBox, QComboBox, QSpinBox,
     QTextEdit, QFileDialog, QMessageBox, QAction, QSlider
 )
 
@@ -172,6 +172,11 @@ class MainWindow(QMainWindow):
         self.btn_load_mjd = QPushButton("Load MJD table")
         self.btn_labels_csv = QPushButton("Select labels CSV (resume)")
 
+        for btn in (self.btn_load_fil, self.btn_load_dm, self.btn_load_mjd, self.btn_labels_csv):
+            btn.setMinimumHeight(26)
+            btn.setSizePolicy(btn.sizePolicy().horizontalPolicy(), btn.sizePolicy().verticalPolicy())
+            btn.setMaximumWidth(260)
+
         self.st_fil = QLabel("✗")
         self.st_dm = QLabel("✗")
         self.st_mjd = QLabel("✗")
@@ -183,22 +188,32 @@ class MainWindow(QMainWindow):
         self.path_lbl = QLabel("")
 
         for lab in (self.st_fil, self.st_dm, self.st_mjd, self.st_lbl):
-            lab.setFixedWidth(20)
+            lab.setFixedWidth(18)
+            lab.setAlignment(Qt.AlignCenter)
+            lab.setStyleSheet("font-weight: bold;")
 
-        status = QWidget()
-        s = QGridLayout(status)
-        s.addWidget(QLabel(".fil:"), 0, 0); s.addWidget(self.st_fil, 0, 1); s.addWidget(self.path_fil, 0, 2)
-        s.addWidget(QLabel("DM .npy:"), 1, 0); s.addWidget(self.st_dm, 1, 1); s.addWidget(self.path_dm, 1, 2)
-        s.addWidget(QLabel("MJD table:"), 2, 0); s.addWidget(self.st_mjd, 2, 1); s.addWidget(self.path_mjd, 2, 2)
-        s.addWidget(QLabel("labels.csv:"), 3, 0); s.addWidget(self.st_lbl, 3, 1); s.addWidget(self.path_lbl, 3, 2)
+        for path in (self.path_fil, self.path_dm, self.path_mjd, self.path_lbl):
+            path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            path.setStyleSheet("color: #c9d1d9;")
+
+        def _loader_row(button: QPushButton, icon: QLabel, path: QLabel) -> QWidget:
+            w = QWidget()
+            h = QHBoxLayout(w)
+            h.setContentsMargins(2, 0, 2, 0)
+            h.setSpacing(8)
+            h.addWidget(button, 0)
+            h.addWidget(path, 1)
+            h.addWidget(icon, 0)
+            return w
 
         loaders = QWidget()
         l = QVBoxLayout(loaders)
-        l.addWidget(status)
-        l.addWidget(self.btn_load_fil)
-        l.addWidget(self.btn_load_dm)
-        l.addWidget(self.btn_load_mjd)
-        l.addWidget(self.btn_labels_csv)
+        l.setContentsMargins(0, 0, 0, 0)
+        l.setSpacing(6)
+        l.addWidget(_loader_row(self.btn_load_fil, self.st_fil, self.path_fil))
+        l.addWidget(_loader_row(self.btn_load_dm, self.st_dm, self.path_dm))
+        l.addWidget(_loader_row(self.btn_load_mjd, self.st_mjd, self.path_mjd))
+        l.addWidget(_loader_row(self.btn_labels_csv, self.st_lbl, self.path_lbl))
         l.addStretch(1)
         box6 = self._boxed("6) Data loading", loaders)
 
