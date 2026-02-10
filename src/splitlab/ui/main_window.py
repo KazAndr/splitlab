@@ -144,6 +144,10 @@ class MainWindow(QMainWindow):
         self.profile_plot = pg.PlotWidget()
         self.profile_plot.showGrid(x=True, y=True)
         self.profile_plot.getPlotItem().getViewBox().setDefaultPadding(0.0)
+        # hide axes to avoid label shift; keep clean symmetric margins
+        pi = self.profile_plot.getPlotItem()
+        for ax in ("left", "right", "bottom", "top"):
+            pi.hideAxis(ax)
         fb = QWidget()
         vv = QVBoxLayout(fb)
         vv.addWidget(self.fb_view, 3)
@@ -698,8 +702,20 @@ class MainWindow(QMainWindow):
         lo2, hi2 = levels_by_percentile(dd_img)
         self.fb_view.setImage(dd_img, autoLevels=False, levels=(lo2, hi2))
 
+        # normalize profile to [0, 1] for stable axis scaling
+        prof = np.asarray(prof, dtype=float)
+        if prof.size:
+            lo = float(np.min(prof))
+            hi = float(np.max(prof))
+            if hi != lo:
+                prof = (prof - lo) / (hi - lo)
+            else:
+                prof = np.zeros_like(prof)
+
         self.profile_plot.clear()
-        self.profile_plot.plot(prof)
+        self.profile_plot.plot(prof, pen=pg.mkPen("w", width=1))
+        self.profile_plot.setXRange(0, max(1, len(prof) - 1), padding=0)
+        self.profile_plot.setYRange(0, 1, padding=0)
 
     # ---------------- saving ----------------
     def _ensure_labels_store(self) -> bool:
