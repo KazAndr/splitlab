@@ -9,7 +9,7 @@ from PyQt5.QtGui import QDoubleValidator, QKeySequence
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QLabel, QLineEdit, QPushButton,
     QGroupBox, QHBoxLayout, QVBoxLayout, QCheckBox, QComboBox, QSpinBox,
-    QTextEdit, QFileDialog, QMessageBox, QAction
+    QTextEdit, QFileDialog, QMessageBox, QAction, QSlider
 )
 
 from splitlab.core.data_manager import DataManager
@@ -128,12 +128,19 @@ class MainWindow(QMainWindow):
         self.cb_center.setChecked(True)
         self.cb_center.setEnabled(False)  # center always active (per spec)
         radios = QWidget()
-        v3 = QVBoxLayout(radios)
+        v3 = QHBoxLayout(radios)
+        v3.setContentsMargins(4, 4, 4, 4)
+        v3.setSpacing(16)
+        v3.addStretch(1)
         v3.addWidget(self.cb_left)
+        v3.addStretch(1)
         v3.addWidget(self.cb_center)
+        v3.addStretch(1)
         v3.addWidget(self.cb_right)
         v3.addStretch(1)
+        v3.setAlignment(Qt.AlignCenter)
         box3 = self._boxed("3) Segment labels (0/1)", radios)
+        box3.setMaximumHeight(80)
 
         # Block 4
         self.fb_view = pg.ImageView()
@@ -262,23 +269,59 @@ class MainWindow(QMainWindow):
         self.cb_autosave.setChecked(True)
         box11 = self._boxed("11) Saving", self.cb_autosave)
 
-        # Block 12 mode
-        self.mode = QComboBox()
-        self.mode.addItems(["Viewing", "Labeling"])
-        box12 = self._boxed("12) Mode", self.mode)
+        # Block 12 mode (toggle switch style)
+        self.mode_slider = QSlider(Qt.Horizontal)
+        self.mode_slider.setRange(0, 1)  # 0 = Viewing, 1 = Labeling
+        self.mode_slider.setValue(0)
+        self.mode_slider.setFixedWidth(70)
+        self.mode_slider.setCursor(Qt.PointingHandCursor)
+        self.mode_slider.setStyleSheet(
+            """
+            QSlider::groove:horizontal {
+                height: 20px;
+                background: #666;
+                border-radius: 10px;
+            }
+            QSlider::handle:horizontal {
+                background: #f2f2f2;
+                border: 1px solid #444;
+                width: 22px;
+                margin: -2px 0;
+                border-radius: 11px;
+            }
+            """
+        )
+        self.lbl_viewing = QLabel("Viewing mode")
+        self.lbl_labeling = QLabel("Labeling mode")
+        mode_row = QWidget()
+        mr = QHBoxLayout(mode_row)
+        mr.setContentsMargins(6, 4, 6, 4)
+        mr.setSpacing(10)
+        mr.addWidget(self.lbl_viewing)
+        mr.addWidget(self.mode_slider)
+        mr.addWidget(self.lbl_labeling)
+        mr.addStretch(1)
+        box12 = self._boxed("12) Mode", mode_row)
 
-        # layout
+        # layout: left column = images + segment labels between segments and FB
         grid.addWidget(box1, 0, 0, 2, 2)
         grid.addWidget(box2, 2, 0, 2, 2)
-        grid.addWidget(box4, 4, 0, 2, 2)
+        grid.addWidget(box3, 4, 0, 1, 2)
+        grid.addWidget(box4, 5, 0, 2, 2)
+
+        # balance vertical space
+        grid.setRowStretch(0, 2)  # box1 top half
+        grid.setRowStretch(2, 2)  # box2
+        grid.setRowStretch(4, 1)  # box3 small
+        grid.setRowStretch(5, 3)  # box4 largest
 
         right = QVBoxLayout()
-        for b in (box5, box6, box7, box8, box3, box9, box10, box11, box12):
+        for b in (box5, box6, box7, box8, box9, box10, box11, box12):
             right.addWidget(b)
         right.addStretch(1)
         rightw = QWidget()
         rightw.setLayout(right)
-        grid.addWidget(rightw, 0, 2, 6, 1)
+        grid.addWidget(rightw, 0, 2, 7, 1)
 
         self.setCentralWidget(root)
         self.resize(1500, 980)
@@ -338,8 +381,8 @@ class MainWindow(QMainWindow):
         self.btn_yes.clicked.connect(self._label_yes)
         self.btn_no.clicked.connect(self._label_no)
 
-        # mode
-        self.mode.currentTextChanged.connect(self._apply_mode)
+        # mode toggle
+        self.mode_slider.valueChanged.connect(self._apply_mode)
 
         # jump
         self.btn_jump.clicked.connect(self._jump_to_seg)
@@ -395,8 +438,14 @@ class MainWindow(QMainWindow):
         self.cb_auto.setEnabled(enabled)
         self.edge_pct.setEnabled(enabled)
 
+    def _mode_text(self) -> str:
+        return "Labeling" if self._is_labeling() else "Viewing"
+
+    def _is_labeling(self) -> bool:
+        return bool(self.mode_slider.value() == 1)
+
     def _apply_mode(self):
-        is_labeling = (self.mode.currentText() == "Labeling")
+        is_labeling = self._is_labeling()
         # in Viewing you can inspect but cannot save
         if not is_labeling:
             self.btn_yes.setEnabled(False)
@@ -404,7 +453,7 @@ class MainWindow(QMainWindow):
 
     def _update_info(self, extra: str = ""):
         lines = []
-        lines.append(f"mode: {self.mode.currentText()}")
+        lines.append(f"mode: {self._mode_text()}")
         lines.append(f"period_sec: {self.mgr.period_sec}")
         lines.append(f"dm: {self.mgr.dm}")
         lines.append(f"split: {self.mgr.split}")
@@ -657,7 +706,7 @@ class MainWindow(QMainWindow):
         self._render_segments_and_fb()
 
         # enable Y/N only in labeling mode
-        if self.mode.currentText() == "Labeling":
+        if self._is_labeling():
             self.btn_yes.setEnabled(True)
             self.btn_no.setEnabled(True)
 
@@ -763,7 +812,7 @@ class MainWindow(QMainWindow):
         )
 
     def _label_yes(self):
-        if self.mode.currentText() != "Labeling":
+        if not self._is_labeling():
             return
         if self.center_seg is None or self.clicked_global_x is None:
             return
@@ -778,7 +827,7 @@ class MainWindow(QMainWindow):
         self._next_row()
 
     def _label_no(self):
-        if self.mode.currentText() != "Labeling":
+        if not self._is_labeling():
             return
         if self.center_seg is None or self.clicked_global_x is None:
             return
