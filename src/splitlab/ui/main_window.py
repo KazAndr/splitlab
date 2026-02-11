@@ -26,6 +26,9 @@ class MainWindow(QMainWindow):
         self._pen_click = pg.mkPen(color="#ffffff", width=2)
         self._pen_seg = pg.mkPen(color="#00e5ff", width=2, style=Qt.DashLine)
         self._pen_jump = pg.mkPen(color="#ff00ff", width=2, style=Qt.DashLine)
+        # filterbank mode: True = dedispersed, False = raw
+        self._fb_dedisp = True
+        self._fb_cache = None  # type: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None
 
         self.labels: LabelStore | None = None
         self.current_row_idx: int = 0
@@ -159,6 +162,29 @@ class MainWindow(QMainWindow):
         self.fb_view.ui.roiBtn.hide()
         self.fb_view.ui.menuBtn.hide()
         self._tune_imageview(self.fb_view)
+
+        self.fb_slider = QSlider(Qt.Horizontal)
+        self.fb_slider.setRange(0, 1)  # 0 = dispersed, 1 = dedispersed
+        self.fb_slider.setValue(1)
+        self.fb_slider.setFixedWidth(120)
+        self.fb_slider.setCursor(Qt.PointingHandCursor)
+        self.fb_slider.setStyleSheet(
+            """
+            QSlider::groove:horizontal { height: 14px; background: #555; border-radius: 7px; }
+            QSlider::handle:horizontal { background: #f2f2f2; border: 1px solid #444; width: 18px; margin: -4px 0; border-radius: 9px; }
+            """
+        )
+        self.fb_lbl_disp = QLabel("Dispersed")
+        self.fb_lbl_dedisp = QLabel("Dedispersed")
+        fb_ctrl = QWidget()
+        fc = QHBoxLayout(fb_ctrl)
+        fc.setContentsMargins(4, 0, 4, 4)
+        fc.setSpacing(10)
+        fc.addWidget(self.fb_lbl_disp)
+        fc.addWidget(self.fb_slider)
+        fc.addWidget(self.fb_lbl_dedisp)
+        fc.addStretch(1)
+
         self.profile_plot = pg.PlotWidget()
         self.profile_plot.showGrid(x=True, y=True)
         self.profile_plot.getPlotItem().getViewBox().setDefaultPadding(0.0)
@@ -168,6 +194,7 @@ class MainWindow(QMainWindow):
             pi.hideAxis(ax)
         fb = QWidget()
         vv = QVBoxLayout(fb)
+        vv.addWidget(fb_ctrl)
         vv.addWidget(self.fb_view, 3)
         vv.addWidget(self.profile_plot, 1)
         box4 = self._boxed("4) Dedispersed filterbank + profile (3*SEG)", fb)
@@ -409,6 +436,8 @@ class MainWindow(QMainWindow):
 
         # mode toggle
         self.mode_slider.valueChanged.connect(self._apply_mode)
+        # fb mode toggle
+        self.fb_slider.valueChanged.connect(self._on_fb_mode_changed)
 
         # jump
         self.btn_jump.clicked.connect(self._jump_to_seg)
@@ -778,30 +807,54 @@ class MainWindow(QMainWindow):
             if offset_in_center >= (self.mgr.SEG - 1 - thr):
                 self.cb_right.setChecked(True)
 
-        # block 4: filterbank + dedisp + profile
-        raw_f_t, dd_f_t, prof = self.mgr.read_filterbank_triplet(self.center_seg)
+        # block 4: filterbank (dispersed/dedispersed) + profile
+        raw_f_t, dd_f_t, _ = self.mgr.read_filterbank_triplet(self.center_seg)
 
         freq_mhz = self.mgr.channel_freq_mhz()
         flip_freq = freq_mhz[0] < freq_mhz[-1]
+        raw_img = np.flipud(raw_f_t) if flip_freq else raw_f_t
         dd_img = np.flipud(dd_f_t) if flip_freq else dd_f_t
-        
-        lo2, hi2 = levels_by_percentile(dd_img)
-        self.fb_view.setImage(dd_img, autoLevels=False, levels=(lo2, hi2))
 
-        # normalize profile to [0, 1] for stable axis scaling
-        prof = np.asarray(prof, dtype=float)
-        if prof.size:
-            lo = float(np.min(prof))
-            hi = float(np.max(prof))
+        raw_prof = np.sum(raw_img, axis=0)
+        dd_prof = np.sum(dd_img, axis=0)
+
+        def _norm_prof(p):
+            p = np.asarray(p, dtype=float)
+            if p.size == 0:
+                return p
+            lo = float(np.min(p))
+            hi = float(np.max(p))
             if hi != lo:
-                prof = (prof - lo) / (hi - lo)
-            else:
-                prof = np.zeros_like(prof)
+                return (p - lo) / (hi - lo)
+            return np.zeros_like(p)
+
+        raw_prof = _norm_prof(raw_prof)
+        dd_prof = _norm_prof(dd_prof)
+
+        self._fb_cache = (raw_img, dd_img, raw_prof, dd_prof)
+        self._render_fb_from_cache()
+
+    def _render_fb_from_cache(self):
+        if self._fb_cache is None:
+            return
+        raw_img, dd_img, raw_prof, dd_prof = self._fb_cache
+        img = dd_img if self._fb_dedisp else raw_img
+        prof = dd_prof if self._fb_dedisp else raw_prof
+
+        lo2, hi2 = levels_by_percentile(img)
+        self.fb_view.setImage(img, autoLevels=False, levels=(lo2, hi2))
+        if self._lut is not None:
+            self.fb_view.getImageItem().setLookupTable(self._lut)
 
         self.profile_plot.clear()
-        self.profile_plot.plot(prof, pen=pg.mkPen("w", width=1))
-        self.profile_plot.setXRange(0, max(1, len(prof) - 1), padding=0)
-        self.profile_plot.setYRange(0, 1, padding=0)
+        if prof.size:
+            self.profile_plot.plot(prof, pen=pg.mkPen("w", width=1))
+            self.profile_plot.setXRange(0, max(1, len(prof) - 1), padding=0)
+            self.profile_plot.setYRange(0, 1, padding=0)
+
+    def _on_fb_mode_changed(self):
+        self._fb_dedisp = (self.fb_slider.value() == 1)
+        self._render_fb_from_cache()
 
     # ---------------- saving ----------------
     def _ensure_labels_store(self) -> bool:
