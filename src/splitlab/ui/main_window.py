@@ -275,6 +275,7 @@ class MainWindow(QMainWindow):
 
         # Block 7 preset + params
         self.cb_auto = QCheckBox("Using auto labeling")
+        self.cb_auto.setChecked(True)
         self.edge_pct = QSpinBox()
         self.edge_pct.setRange(0, 50)
         self.edge_pct.setValue(10)
@@ -640,7 +641,7 @@ class MainWindow(QMainWindow):
 
         self.cb_split.setEnabled(True)
         self.cb_split.setChecked(False)
-        self.cb_auto.setChecked(False)
+        self.cb_auto.setChecked(True)
         self.edge_pct.setValue(10)
         self.period_unit.setCurrentText("s")
         self.period_edit.setText("1.0")
