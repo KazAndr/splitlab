@@ -31,6 +31,7 @@ class MainWindow(QMainWindow):
         self._fb_dedisp = True
         self._fb_cache = None  # type: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None
         self._pulsar_catalog: list[tuple[str, float, float]] = []
+        self._resetting = False
 
         self.labels: LabelStore | None = None
         self.current_row_idx: int = 0
@@ -210,11 +211,14 @@ class MainWindow(QMainWindow):
         self.btn_load_dm = QPushButton("Load DM-time .npy")
         self.btn_load_mjd = QPushButton("Load MJD table")
         self.btn_labels_csv = QPushButton("Select labels CSV (resume)")
+        self.btn_reset = QPushButton("Reset session")
 
         for btn in (self.btn_load_fil, self.btn_load_dm, self.btn_load_mjd, self.btn_labels_csv):
             btn.setMinimumHeight(26)
             btn.setSizePolicy(btn.sizePolicy().horizontalPolicy(), btn.sizePolicy().verticalPolicy())
             btn.setMaximumWidth(260)
+        self.btn_reset.setMinimumHeight(26)
+        self.btn_reset.setMaximumWidth(260)
 
         self.st_fil = QLabel("✗")
         self.st_dm = QLabel("✗")
@@ -253,6 +257,7 @@ class MainWindow(QMainWindow):
         l.addWidget(_loader_row(self.btn_load_dm, self.st_dm, self.path_dm))
         l.addWidget(_loader_row(self.btn_load_mjd, self.st_mjd, self.path_mjd))
         l.addWidget(_loader_row(self.btn_labels_csv, self.st_lbl, self.path_lbl))
+        l.addWidget(self.btn_reset)
         l.addStretch(1)
         box6 = self._boxed("6) Data loading", loaders)
 
@@ -409,6 +414,7 @@ class MainWindow(QMainWindow):
         self._set_controls_enabled(False)
         self._apply_plasma()
         self._load_pulsar_catalog()
+        self._reset_all(initial=True)
 
     def _apply_plasma(self):
         # Plasma colormap for all images
@@ -467,6 +473,8 @@ class MainWindow(QMainWindow):
         self.fb_slider.valueChanged.connect(self._on_fb_mode_changed)
         # pulsar preset
         self.cmb_pulsar.currentIndexChanged.connect(self._on_pulsar_selected)
+        # reset
+        self.btn_reset.clicked.connect(self._reset_all)
 
         # jump
         self.btn_jump.clicked.connect(self._jump_to_seg)
@@ -575,6 +583,63 @@ class MainWindow(QMainWindow):
         self.dm_edit.setText(f"{dm:.4f}")
         self._on_params_changed(silent=True)
         self._update_info(f"Pulsar preset applied: {self.cmb_pulsar.currentText()}")
+
+    def _reset_all(self, initial: bool = False):
+        # avoid recursion if called during __init__
+        if self._resetting:
+            return
+        self._resetting = True
+
+        # data/model reset
+        self.mgr.edmt = None
+        self.mgr.fil = None
+        self.mgr.df_base = None
+        self.mgr.df = None
+        self.mgr.labels_path = None
+        self.labels = None
+        self.current_row_idx = 0
+        self.clicked_global_x = None
+        self.clicked_local_x = None
+        self.center_seg = None
+        self._jump_seg_id = None
+        self._fb_cache = None
+
+        # UI reset
+        for lab in (self.st_fil, self.st_dm, self.st_mjd, self.st_lbl):
+            self._set_ok(lab, False)
+        for path_lab in (self.path_fil, self.path_dm, self.path_mjd, self.path_lbl):
+            path_lab.setText("")
+            path_lab.setToolTip("")
+
+        self.cb_split.setEnabled(True)
+        self.cb_split.setChecked(False)
+        self.cb_auto.setChecked(False)
+        self.edge_pct.setValue(10)
+        self.period_unit.setCurrentText("s")
+        self.period_edit.setText("1.0")
+        self.dm_edit.setText("57.0")
+        self.cmb_pulsar.setCurrentIndex(0)
+        self.mode_slider.setValue(0)   # Viewing
+        self.fb_slider.setValue(1)     # Dedispersed
+
+        self._period_vline.hide()
+        self._period_seg_left.hide()
+        self._period_seg_right.hide()
+        self._seg_click.hide()
+        self.dm_period.clear()
+        self.dm_segments.clear()
+        self.fb_view.clear()
+        self.profile_plot.clear()
+        self.info.clear()
+        self.comment_edit.clear()
+        self.cb_left.setChecked(False)
+        self.cb_center.setChecked(True)
+        self.cb_right.setChecked(False)
+
+        self._set_controls_enabled(False)
+        self._update_info("Reset to initial state. Load data to continue.")
+
+        self._resetting = False
 
     def _apply_mode(self):
         is_labeling = self._is_labeling()
