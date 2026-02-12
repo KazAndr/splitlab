@@ -141,8 +141,7 @@ class MainWindow(QMainWindow):
         self.cb_left = QCheckBox("Left (seg-1)")
         self.cb_center = QCheckBox("Center (seg)")
         self.cb_right = QCheckBox("Right (seg+1)")
-        self.cb_center.setChecked(True)
-        self.cb_center.setEnabled(False)  # center always active (per spec)
+        self.cb_center.setChecked(True)  # default on, but user may toggle
         radios = QWidget()
         v3 = QHBoxLayout(radios)
         v3.setContentsMargins(4, 4, 4, 4)
@@ -876,6 +875,7 @@ class MainWindow(QMainWindow):
         # block 3: reset + auto-labeling
         self.cb_left.setChecked(False)
         self.cb_right.setChecked(False)
+        self.cb_center.setChecked(True)
 
         if self.cb_auto.isChecked():
             thr = int(round(self.mgr.SEG * (self.edge_pct.value() / 100.0)))
@@ -957,7 +957,7 @@ class MainWindow(QMainWindow):
             l_left = l_center = l_right = 0
         else:
             l_left = 1 if self.cb_left.isChecked() else 0
-            l_center = 1  # center always active
+            l_center = 1 if self.cb_center.isChecked() else 0
             l_right = 1 if self.cb_right.isChecked() else 0
 
         return LabelRow(
