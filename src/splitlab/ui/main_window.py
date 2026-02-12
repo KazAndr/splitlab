@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QDoubleValidator, QKeySequence, QStandardItemModel, QStandardItem
@@ -212,12 +213,15 @@ class MainWindow(QMainWindow):
         self.btn_load_dm = QPushButton("Load DM-time .npy")
         self.btn_load_mjd = QPushButton("Load MJD table")
         self.btn_labels_csv = QPushButton("Select labels CSV (resume)")
+        self.btn_labels_new = QPushButton("Create new labels CSV")
         self.btn_reset = QPushButton("Reset session")
 
         for btn in (self.btn_load_fil, self.btn_load_dm, self.btn_load_mjd, self.btn_labels_csv):
             btn.setMinimumHeight(26)
             btn.setSizePolicy(btn.sizePolicy().horizontalPolicy(), btn.sizePolicy().verticalPolicy())
             btn.setMaximumWidth(260)
+        self.btn_labels_new.setMinimumHeight(26)
+        self.btn_labels_new.setMaximumWidth(260)
         self.btn_reset.setMinimumHeight(26)
         self.btn_reset.setMaximumWidth(260)
 
@@ -257,7 +261,14 @@ class MainWindow(QMainWindow):
         l.addWidget(_loader_row(self.btn_load_fil, self.st_fil, self.path_fil))
         l.addWidget(_loader_row(self.btn_load_dm, self.st_dm, self.path_dm))
         l.addWidget(_loader_row(self.btn_load_mjd, self.st_mjd, self.path_mjd))
-        l.addWidget(_loader_row(self.btn_labels_csv, self.st_lbl, self.path_lbl))
+        row_labels = QWidget()
+        rl = QHBoxLayout(row_labels)
+        rl.setContentsMargins(2, 0, 2, 0)
+        rl.setSpacing(8)
+        rl.addWidget(self.btn_labels_csv)
+        rl.addWidget(self.btn_labels_new)
+        rl.addStretch(1)
+        l.addWidget(_loader_row(row_labels, self.st_lbl, self.path_lbl))
         l.addWidget(self.btn_reset)
         l.addStretch(1)
         box6 = self._boxed("6) Data loading", loaders)
@@ -459,6 +470,7 @@ class MainWindow(QMainWindow):
         self.btn_load_fil.clicked.connect(self._on_load_fil)
         self.btn_load_mjd.clicked.connect(self._on_load_mjd)
         self.btn_labels_csv.clicked.connect(self._on_select_labels_csv)
+        self.btn_labels_new.clicked.connect(self._on_create_labels_csv)
 
         # params live-update
         self.period_edit.editingFinished.connect(self._on_params_changed)
@@ -892,6 +904,58 @@ class MainWindow(QMainWindow):
                     self.current_row_idx = i
                     break
             self._load_current_row()
+
+    def _on_create_labels_csv(self):
+        # build default name from pulsar preset or current fields
+        name = "labels"
+        if self.cmb_pulsar.currentIndex() > 0:
+            name = self.cmb_pulsar.currentText()
+        try:
+            mjd = None
+            if self.mgr.df is not None and len(self.mgr.df) > 0:
+                mjd = float(self.mgr.df.iloc[0]["mjd"])
+            if mjd is not None:
+                name = f"{name}_{mjd:.5f}"
+        except Exception:
+            pass
+        suggested = Path(name).with_suffix(".csv")
+
+        dest, _ = QFileDialog.getSaveFileName(self, "Create new labels CSV", str(suggested), "CSV (*.csv)")
+        if not dest:
+            return
+        dest_path = Path(dest)
+
+        if dest_path.exists():
+            reply = QMessageBox.question(
+                self,
+                "File exists",
+                f"{dest_path.name} already exists.\nDo you want to load this file instead of creating a new one?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Yes
+            )
+            if reply == QMessageBox.Cancel:
+                return
+            if reply == QMessageBox.Yes:
+                self.mgr.labels_path = dest_path
+                self.labels = LabelStore(dest_path)
+                self._set_ok(self.st_lbl, True)
+                self.path_lbl.setText(str(dest_path))
+                self.path_lbl.setToolTip(str(dest_path))
+                self._update_info("Existing labels CSV loaded.")
+                self._refresh_labels_table()
+                return
+            # No -> let user pick another name
+            return self._on_create_labels_csv()
+
+        # create empty CSV with headers
+        dest_path.write_text("row_idx,name_of_set,mjd,phase,fname,snr,start_pos,clicked_local_x,clicked_global_x,seg_left,seg_center,seg_right,label_left,label_center,label_right,comment\n", encoding="utf-8")
+        self.mgr.labels_path = dest_path
+        self.labels = LabelStore(dest_path)
+        self._set_ok(self.st_lbl, True)
+        self.path_lbl.setText(str(dest_path))
+        self.path_lbl.setToolTip(str(dest_path))
+        self._update_info("New labels CSV created.")
+        self._refresh_labels_table()
 
 
     def _on_split_changed(self):
