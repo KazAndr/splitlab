@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QGroupBox, QHBoxLayout, QVBoxLayout, QFormLayout, QCheckBox, QComboBox, QSpinBox,
     QTextEdit, QFileDialog, QMessageBox, QAction, QSlider
 )
+import csv
 
 from splitlab.core.data_manager import DataManager
 from splitlab.core.label_store import LabelRow, LabelStore
@@ -29,6 +30,7 @@ class MainWindow(QMainWindow):
         # filterbank mode: True = dedispersed, False = raw
         self._fb_dedisp = True
         self._fb_cache = None  # type: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None
+        self._pulsar_catalog: list[tuple[str, float, float]] = []
 
         self.labels: LabelStore | None = None
         self.current_row_idx: int = 0
@@ -166,7 +168,7 @@ class MainWindow(QMainWindow):
         self.fb_slider = QSlider(Qt.Horizontal)
         self.fb_slider.setRange(0, 1)  # 0 = dispersed, 1 = dedispersed
         self.fb_slider.setValue(1)
-        self.fb_slider.setFixedWidth(120)
+        self.fb_slider.setFixedWidth(40)
         self.fb_slider.setCursor(Qt.PointingHandCursor)
         self.fb_slider.setStyleSheet(
             """
@@ -255,12 +257,16 @@ class MainWindow(QMainWindow):
         l.addStretch(1)
         box6 = self._boxed("6) Data loading", loaders)
 
-        # Block 7 params
+        # Block 7 preset + params
         self.cb_auto = QCheckBox("Using auto labeling")
         self.edge_pct = QSpinBox()
         self.edge_pct.setRange(0, 50)
         self.edge_pct.setValue(10)
         self.edge_pct.setSuffix(" %")
+
+        self.cmb_pulsar = QComboBox()
+        self.cmb_pulsar.setMinimumWidth(160)
+        self.cmb_pulsar.addItem("Select pulsar…")
 
         self.period_edit = QLineEdit("1.0")
         self.period_edit.setValidator(QDoubleValidator(0.0, 1e9, 12))
@@ -283,6 +289,15 @@ class MainWindow(QMainWindow):
         p.addWidget(self.dm_edit, 3, 1)
         p.addWidget(self.cb_split, 4, 0, 1, 2)
         box7 = self._boxed("7) Parameters", params)
+
+        preset_widget = QWidget()
+        pw = QHBoxLayout(preset_widget)
+        pw.setContentsMargins(4, 4, 4, 4)
+        pw.setSpacing(6)
+        pw.addWidget(QLabel("Preset:"))
+        pw.addWidget(self.cmb_pulsar, 1)
+        pw.addStretch(1)
+        box7_preset = self._boxed("7) Pulsar preset", preset_widget)
 
         # Block 8 jump seg_id
         self.seg_spin = QSpinBox()
@@ -326,7 +341,7 @@ class MainWindow(QMainWindow):
         self.mode_slider = QSlider(Qt.Horizontal)
         self.mode_slider.setRange(0, 1)  # 0 = Viewing, 1 = Labeling
         self.mode_slider.setValue(0)
-        self.mode_slider.setFixedWidth(70)
+        self.mode_slider.setFixedWidth(45)
         self.mode_slider.setCursor(Qt.PointingHandCursor)
         self.mode_slider.setStyleSheet(
             """
@@ -369,7 +384,19 @@ class MainWindow(QMainWindow):
         grid.setRowStretch(5, 3)  # box4 largest
 
         right = QVBoxLayout()
-        for b in (box5, box6, box7, box8, box9, box10, box11, box12):
+        right.addWidget(box5)
+        right.addWidget(box6)
+
+        row_presets = QWidget()
+        rp = QHBoxLayout(row_presets)
+        rp.setContentsMargins(0, 0, 0, 0)
+        rp.setSpacing(6)
+        rp.addWidget(box7_preset, 1)
+        rp.addWidget(box7, 2)
+        rp.addWidget(box8, 1)
+        right.addWidget(row_presets)
+
+        for b in (box9, box10, box11, box12):
             right.addWidget(b)
         right.addStretch(1)
         rightw = QWidget()
@@ -382,6 +409,7 @@ class MainWindow(QMainWindow):
         # initial disable until minimal ready
         self._set_controls_enabled(False)
         self._apply_plasma()
+        self._load_pulsar_catalog()
 
     def _apply_plasma(self):
         # Plasma colormap for all images
@@ -438,6 +466,8 @@ class MainWindow(QMainWindow):
         self.mode_slider.valueChanged.connect(self._apply_mode)
         # fb mode toggle
         self.fb_slider.valueChanged.connect(self._on_fb_mode_changed)
+        # pulsar preset
+        self.cmb_pulsar.currentIndexChanged.connect(self._on_pulsar_selected)
 
         # jump
         self.btn_jump.clicked.connect(self._jump_to_seg)
@@ -498,6 +528,54 @@ class MainWindow(QMainWindow):
 
     def _is_labeling(self) -> bool:
         return bool(self.mode_slider.value() == 1)
+
+    def _load_pulsar_catalog(self):
+        # optional preset list from data/pulsars.csv (name,period_s,dm)
+        try:
+            root = Path(__file__).resolve().parents[3]
+            cat_path = root / "data" / "pulsars.csv"
+        except Exception:
+            return
+        if not cat_path.exists():
+            return
+        rows: list[tuple[str, float, float]] = []
+        try:
+            with cat_path.open("r", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        name = row.get("name", "").strip()
+                        period = float(row.get("period_s", "nan"))
+                        dm = float(row.get("dm", "nan"))
+                        if name:
+                            rows.append((name, period, dm))
+                    except Exception:
+                        continue
+        except Exception:
+            return
+
+        if rows:
+            self._pulsar_catalog = rows
+            self.cmb_pulsar.blockSignals(True)
+            self.cmb_pulsar.clear()
+            self.cmb_pulsar.addItem("Select pulsar…")
+            for name, period, dm in rows:
+                self.cmb_pulsar.addItem(name, (period, dm))
+            self.cmb_pulsar.blockSignals(False)
+
+    def _on_pulsar_selected(self, idx: int):
+        if idx <= 0:
+            return
+        data = self.cmb_pulsar.itemData(idx)
+        if not data or not isinstance(data, tuple) or len(data) != 2:
+            return
+        period, dm = data
+        # set period in seconds
+        self.period_unit.setCurrentText("s")
+        self.period_edit.setText(f"{period:.12g}")
+        self.dm_edit.setText(f"{dm:.4f}")
+        self._on_params_changed(silent=True)
+        self._update_info(f"Pulsar preset applied: {self.cmb_pulsar.currentText()}")
 
     def _apply_mode(self):
         is_labeling = self._is_labeling()
