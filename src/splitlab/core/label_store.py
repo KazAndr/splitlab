@@ -52,3 +52,12 @@ class LabelStore:
         if self.df.empty or "seg_center" not in self.df.columns:
             return False
         return bool((self.df["seg_center"] == seg_center).any())
+
+    def update_comment(self, seg_center: int, comment: str) -> None:
+        if self.df.empty or "seg_center" not in self.df.columns:
+            return
+        mask = self.df["seg_center"] == seg_center
+        if not mask.any():
+            return
+        self.df.loc[mask, "comment"] = comment
+        self.df.to_csv(self.path, index=False)

@@ -5,11 +5,11 @@ from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QDoubleValidator, QKeySequence
+from PyQt5.QtGui import QDoubleValidator, QKeySequence, QStandardItemModel, QStandardItem
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QGridLayout, QLabel, QLineEdit, QPushButton,
     QGroupBox, QHBoxLayout, QVBoxLayout, QFormLayout, QCheckBox, QComboBox, QSpinBox,
-    QTextEdit, QFileDialog, QMessageBox, QAction, QSlider
+    QTextEdit, QFileDialog, QMessageBox, QAction, QSlider, QTableView
 )
 import csv
 
@@ -32,6 +32,7 @@ class MainWindow(QMainWindow):
         self._fb_cache = None  # type: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None
         self._pulsar_catalog: list[tuple[str, float, float]] = []
         self._resetting = False
+        self.labels_model: QStandardItemModel | None = None
 
         self.labels: LabelStore | None = None
         self.current_row_idx: int = 0
@@ -315,11 +316,18 @@ class MainWindow(QMainWindow):
         box8 = self._boxed("8) Jump to segment index", jump)
 
         # Block 9 (table later) + comment
+        self.labels_view = QTableView()
+        self.labels_view.setSelectionBehavior(QTableView.SelectRows)
+        self.labels_view.setSelectionMode(QTableView.SingleSelection)
+        self.labels_view.setEditTriggers(QTableView.DoubleClicked | QTableView.SelectedClicked | QTableView.EditKeyPressed)
+        self.labels_view.setMinimumHeight(180)
+
         self.comment_edit = QLineEdit()
         self.comment_edit.setPlaceholderText("Comment for current seg_center (Enter saves, stays on row)")
         tbl = QWidget()
         t = QVBoxLayout(tbl)
-        t.addWidget(QLabel("Labels table: TODO (will be QTableView)"))
+        t.addWidget(QLabel("Labels table"))
+        t.addWidget(self.labels_view, 1)
         t.addWidget(self.comment_edit)
         box9 = self._boxed("9) Labels & comment", tbl)
 
@@ -415,6 +423,7 @@ class MainWindow(QMainWindow):
         self._apply_plasma()
         self._load_pulsar_catalog()
         self._reset_all(initial=True)
+        self._wire_labels_view()
 
     def _apply_plasma(self):
         # Plasma colormap for all images
@@ -510,6 +519,12 @@ class MainWindow(QMainWindow):
         act_next.setShortcutContext(Qt.ApplicationShortcut)
         act_next.triggered.connect(self._next_row)
         self.addAction(act_next)
+
+    def _wire_labels_view(self):
+        # selection change -> show comment in editor
+        sel_model = self.labels_view.selectionModel()
+        if sel_model:
+            sel_model.selectionChanged.connect(self._on_labels_selection_changed)
 
     # ---------------- helpers ----------------
     def _set_controls_enabled(self, enabled: bool) -> None:
@@ -639,7 +654,97 @@ class MainWindow(QMainWindow):
         self._set_controls_enabled(False)
         self._update_info("Reset to initial state. Load data to continue.")
 
+        # reset labels table
+        if self.labels_model is not None:
+            self.labels_model.clear()
+        self._fb_cache = None
+
         self._resetting = False
+
+    def _refresh_labels_table(self, select_seg_center: int | None = None):
+        if self.labels is None or self.labels.df.empty:
+            if self.labels_model:
+                self.labels_model.clear()
+            return
+
+        df = self.labels.df.copy()
+        cols = ["seg_center", "row_idx", "mjd", "phase", "fname", "snr",
+                "label_left", "label_center", "label_right", "comment"]
+        df = df[[c for c in cols if c in df.columns]]
+
+        model = QStandardItemModel(df.shape[0], df.shape[1])
+        model.setHorizontalHeaderLabels(df.columns.tolist())
+        for r in range(df.shape[0]):
+            for c, col in enumerate(df.columns):
+                val = df.iloc[r][col]
+                item = QStandardItem("" if pd.isna(val) else str(val))
+                if col != "comment":
+                    item.setEditable(False)
+                model.setItem(r, c, item)
+        model.itemChanged.connect(self._on_label_item_changed)
+        self.labels_model = model
+        self.labels_view.setModel(model)
+        self.labels_view.resizeColumnsToContents()
+
+        if select_seg_center is not None and "seg_center" in df.columns:
+            matches = df.index[df["seg_center"] == select_seg_center].tolist()
+            if matches:
+                row = matches[0]
+                sel_model = self.labels_view.selectionModel()
+                if sel_model:
+                    sel_model.select(model.index(row, 0), sel_model.ClearAndSelect | sel_model.Rows)
+                    self.labels_view.scrollTo(model.index(row, 0))
+
+    def _on_label_item_changed(self, item: QStandardItem):
+        if self.labels is None:
+            return
+        col = item.column()
+        if self.labels_model is None:
+            return
+        header = self.labels_model.headerData(col, Qt.Horizontal)
+        if header != "comment":
+            return
+        row = item.row()
+        seg_idx = self.labels_model.index(row, 0)
+        seg_val = self.labels_model.data(seg_idx)
+        try:
+            seg_center = int(float(seg_val))
+        except Exception:
+            return
+        new_comment = item.text()
+        self.labels.update_comment(seg_center, new_comment)
+        self._update_info(f"Comment updated for seg_center={seg_center}")
+
+    def _on_labels_selection_changed(self, *args, **kwargs):
+        if self.labels_model is None:
+            return
+        sel = self.labels_view.selectionModel()
+        if not sel or not sel.hasSelection():
+            return
+        idx = sel.selectedRows()[0]
+        comment_idx = self.labels_model.index(idx.row(), self.labels_model.columnCount() - 1)
+        comment_text = self.labels_model.data(comment_idx)
+        self.comment_edit.setText(comment_text or "")
+        self.comment_edit.setCursorPosition(0)
+
+    def _select_in_labels_table(self, seg_center: int | None):
+        if seg_center is None or self.labels_model is None:
+            return
+        rows = []
+        for r in range(self.labels_model.rowCount()):
+            try:
+                val = int(float(self.labels_model.data(self.labels_model.index(r, 0))))
+                if val == seg_center:
+                    rows.append(r)
+                    break
+            except Exception:
+                continue
+        if rows:
+            sel_model = self.labels_view.selectionModel()
+            if sel_model:
+                idx = self.labels_model.index(rows[0], 0)
+                sel_model.select(idx, sel_model.ClearAndSelect | sel_model.Rows)
+                self.labels_view.scrollTo(idx)
 
     def _apply_mode(self):
         is_labeling = self._is_labeling()
@@ -919,6 +1024,7 @@ class MainWindow(QMainWindow):
             self.btn_no.setEnabled(True)
 
         self._update_info("Click registered → rendered segments + filterbank.")
+        self._select_in_labels_table(self.center_seg)
 
     def _render_segments_and_fb(self):
         if self.center_seg is None or self.clicked_global_x is None:
@@ -1058,6 +1164,7 @@ class MainWindow(QMainWindow):
         self._pending_comment = ""
         self.comment_edit.setText("")
         self._next_row()
+        self._refresh_labels_table(select_seg_center=row.seg_center)
 
     def _label_no(self):
         if not self._is_labeling():
@@ -1073,6 +1180,7 @@ class MainWindow(QMainWindow):
         self._pending_comment = ""
         self.comment_edit.setText("")
         self._next_row()
+        self._refresh_labels_table(select_seg_center=row.seg_center)
 
     def _save_comment(self):
         txt = self.comment_edit.text().strip()
@@ -1091,6 +1199,7 @@ class MainWindow(QMainWindow):
             row = self._make_label_row(force_all_zero=False)
             self.labels.upsert(row)
             self._update_info("Comment saved (upsert). Staying on the same row.")
+            self._refresh_labels_table(select_seg_center=row.seg_center)
         else:
             self._update_info("Comment staged. Press Y/N to save labels (comment will be included).")
 
