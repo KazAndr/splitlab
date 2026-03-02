@@ -34,6 +34,7 @@ class MainWindow(QMainWindow):
         self._pulsar_catalog: list[tuple[str, float, float]] = []
         self._resetting = False
         self.labels_model: QStandardItemModel | None = None
+        self._labels_header = "row_idx,name_of_set,mjd,phase,fname,snr,start_pos,clicked_local_x,clicked_global_x,seg_left,seg_center,seg_right,label_left,label_center,label_right,comment\n"
 
         self.labels: LabelStore | None = None
         self.current_row_idx: int = 0
@@ -612,6 +613,12 @@ class MainWindow(QMainWindow):
         self._on_params_changed(silent=True)
         self._update_info(f"Pulsar preset applied: {self.cmb_pulsar.currentText()}")
 
+    def _create_labels_file(self, dest_path: Path):
+        try:
+            dest_path.write_text(self._labels_header, encoding="utf-8")
+        except Exception as e:
+            QMessageBox.critical(self, "Labels CSV", f"Failed to create file:\n{e}")
+
     def _reset_all(self, initial: bool = False):
         # avoid recursion if called during __init__
         if self._resetting:
@@ -875,13 +882,25 @@ class MainWindow(QMainWindow):
         self._try_activate()
 
     def _on_select_labels_csv(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Select labels CSV (existing or new)", "", "CSV (*.csv)")
+        path, _ = QFileDialog.getOpenFileName(self, "Select labels CSV (existing)", "", "CSV (*.csv)")
         if not path:
             return
+        dest_path = Path(path)
+        if not dest_path.exists():
+            reply = QMessageBox.question(
+                self,
+                "File not found",
+                f"{dest_path.name} does not exist.\nCreate a new labels CSV here?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
+            )
+            if reply == QMessageBox.No:
+                return
+            self._create_labels_file(dest_path)
 
         try:
-            self.mgr.labels_path = Path(path)
-            self.labels = LabelStore(path)
+            self.mgr.labels_path = dest_path
+            self.labels = LabelStore(dest_path)
         except Exception as e:
             QMessageBox.critical(self, "Labels CSV failed", str(e))
             self.mgr.labels_path = None
@@ -892,8 +911,8 @@ class MainWindow(QMainWindow):
             return
 
         self._set_ok(self.st_lbl, True)
-        self.path_lbl.setText(path)
-        self.path_lbl.setToolTip(path)
+        self.path_lbl.setText(str(dest_path))
+        self.path_lbl.setToolTip(str(dest_path))
 
         self._update_info("Labels CSV selected. Resume will use seg_center = start_pos//SEG heuristic.")
 
@@ -948,8 +967,7 @@ class MainWindow(QMainWindow):
             # No -> let user pick another name
             return self._on_create_labels_csv()
 
-        # create empty CSV with headers
-        dest_path.write_text("row_idx,name_of_set,mjd,phase,fname,snr,start_pos,clicked_local_x,clicked_global_x,seg_left,seg_center,seg_right,label_left,label_center,label_right,comment\n", encoding="utf-8")
+        self._create_labels_file(dest_path)
         self.mgr.labels_path = dest_path
         self.labels = LabelStore(dest_path)
         self._set_ok(self.st_lbl, True)
